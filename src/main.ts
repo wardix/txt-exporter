@@ -14,30 +14,6 @@ interface PrometheusTimeSeries {
   timestamp?: number
 }
 
-interface ValidationError {
-  line: number
-  error: string
-  content: string
-}
-
-interface FileValidationSummary {
-  filePath: string
-  totalLines: number
-  validLines: number
-  invalidLines: number
-  errors: ValidationError[]
-  isValid: boolean
-}
-
-interface DirectoryValidationResults {
-  directoryPath: string
-  fileCount: number
-  validFileCount: number
-  invalidFileCount: number
-  fileSummaries: FileValidationSummary[]
-  overallStatus: 'valid' | 'invalid'
-}
-
 // Create Hono app
 const app = new Hono()
 
@@ -231,67 +207,6 @@ function parseLabel(labelStr: string): [string, string] {
   return [name, value]
 }
 
-async function validateFile(filePath: string): Promise<FileValidationSummary> {
-  const summary: FileValidationSummary = {
-    filePath,
-    totalLines: 0,
-    validLines: 0,
-    invalidLines: 0,
-    errors: [],
-    isValid: true,
-  }
-
-  try {
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
-      throw new Error(`File not found: ${filePath}`)
-    }
-
-    const fileStream = fs.createReadStream(filePath)
-    const rl = readline.createInterface({
-      input: fileStream,
-      crlfDelay: Infinity,
-    })
-
-    let lineNumber = 0
-
-    for await (const line of rl) {
-      lineNumber++
-      summary.totalLines++
-
-      // Skip empty lines
-      if (!line.trim()) {
-        continue
-      }
-
-      const result = validatePrometheusTimeSeries(line)
-
-      if (result.isValid) {
-        summary.validLines++
-      } else {
-        summary.invalidLines++
-        summary.errors.push({
-          line: lineNumber,
-          error: result.error || 'Unknown error',
-          content: line,
-        })
-      }
-    }
-
-    summary.isValid = summary.invalidLines === 0
-    return summary
-  } catch (error) {
-    console.error(`Error processing file ${filePath}:`, error)
-    summary.errors.push({
-      line: 0,
-      error: `File processing error: ${error instanceof Error ? error.message : String(error)}`,
-      content: '',
-    })
-    summary.isValid = false
-    return summary
-  }
-}
-
 function getFilesInDirectory(directoryPath: string): string[] {
   try {
     const entries = fs.readdirSync(directoryPath, { withFileTypes: true })
@@ -301,97 +216,6 @@ function getFilesInDirectory(directoryPath: string): string[] {
   } catch (error) {
     console.error(`Error reading directory ${directoryPath}:`, error)
     return []
-  }
-}
-
-async function validateDirectory(
-  directoryPath: string,
-): Promise<DirectoryValidationResults> {
-  const results: DirectoryValidationResults = {
-    directoryPath,
-    fileCount: 0,
-    validFileCount: 0,
-    invalidFileCount: 0,
-    fileSummaries: [],
-    overallStatus: 'valid',
-  }
-
-  try {
-    // Check if directory exists
-    if (!fs.existsSync(directoryPath)) {
-      throw new Error(`Directory not found: ${directoryPath}`)
-    }
-
-    // Get all .txt files in the directory
-    const files = getFilesInDirectory(directoryPath)
-    results.fileCount = files.length
-
-    console.log(`Found ${files.length} .txt files in ${directoryPath}`)
-
-    // Validate each file
-    for (const filePath of files) {
-      console.log(`Validating file: ${filePath}`)
-      const fileSummary = await validateFile(filePath)
-      results.fileSummaries.push(fileSummary)
-
-      if (fileSummary.isValid) {
-        results.validFileCount++
-      } else {
-        results.invalidFileCount++
-      }
-    }
-
-    results.overallStatus = results.invalidFileCount === 0 ? 'valid' : 'invalid'
-    return results
-  } catch (error) {
-    console.error(`Error validating directory ${directoryPath}:`, error)
-    results.overallStatus = 'invalid'
-    return results
-  }
-}
-
-// Create a serializable version of the validation results
-function serializeValidationResults(results: DirectoryValidationResults): any {
-  return {
-    directoryPath: results.directoryPath,
-    fileCount: results.fileCount,
-    validFileCount: results.validFileCount,
-    invalidFileCount: results.invalidFileCount,
-    overallStatus: results.overallStatus,
-    fileSummaries: results.fileSummaries.map((summary) => ({
-      ...summary,
-      labels: summary.errors.map((error) => ({
-        line: error.line,
-        error: error.error,
-        content: error.content,
-      })),
-    })),
-  }
-}
-
-// Validate a single line of Prometheus time series data
-function validateSingleLine(line: string): any {
-  const result = validatePrometheusTimeSeries(line)
-
-  if (result.isValid && result.data) {
-    // Convert Map to plain object for JSON serialization
-    const labelsObj: Record<string, string> = {}
-    result.data.labels.forEach((value, key) => {
-      labelsObj[key] = value
-    })
-
-    return {
-      isValid: true,
-      data: {
-        ...result.data,
-        labels: labelsObj,
-      },
-    }
-  } else {
-    return {
-      isValid: false,
-      error: result.error,
-    }
   }
 }
 
@@ -408,14 +232,9 @@ app.get('/', (c) => {
           'Display all valid Prometheus metrics from the configured directory (for scraping)',
       },
       {
-        path: '/metrics/validate',
-        method: 'POST',
-        description: 'Validate a single line of Prometheus metrics data',
-      },
-      {
-        path: '/metrics/file/:filename',
+        path: '/health',
         method: 'GET',
-        description: 'Validate a specific file in the metrics directory',
+        description: 'Health check endpoint',
       },
     ],
   })
@@ -495,62 +314,6 @@ app.get('/metrics', async (c) => {
     console.error('Error processing metrics:', error)
     return c.text(
       `# Error: Failed to retrieve metrics: ${error instanceof Error ? error.message : String(error)}`,
-      500,
-    )
-  }
-})
-
-// Validate a single line submitted in the request body
-app.post('/metrics/validate', async (c) => {
-  try {
-    const body = await c.req.json()
-
-    if (!body.line) {
-      return c.json({ error: 'No metrics line provided in request body' }, 400)
-    }
-
-    const result = validateSingleLine(body.line)
-    return c.json(result)
-  } catch (error) {
-    console.error('Error validating line:', error)
-    return c.json(
-      {
-        error: `Failed to validate metrics line: ${error instanceof Error ? error.message : String(error)}`,
-      },
-      500,
-    )
-  }
-})
-
-// Validate a specific file in the metrics directory
-app.get('/metrics/file/:filename', async (c) => {
-  try {
-    const filename = c.req.param('filename')
-
-    // Sanitize filename to prevent directory traversal
-    const sanitizedFilename = path.basename(filename)
-    const filePath = path.join(DATA_DIR, sanitizedFilename)
-
-    if (!fs.existsSync(filePath)) {
-      return c.json({ error: `File not found: ${sanitizedFilename}` }, 404)
-    }
-
-    // Only allow .txt files
-    if (!filePath.endsWith('.txt')) {
-      return c.json({ error: 'Only .txt files are supported' }, 400)
-    }
-
-    const summary = await validateFile(filePath)
-    return c.json({
-      timestamp: new Date().toISOString(),
-      ...summary,
-    })
-  } catch (error) {
-    console.error('Error validating file:', error)
-    return c.json(
-      {
-        error: `Failed to validate file: ${error instanceof Error ? error.message : String(error)}`,
-      },
       500,
     )
   }
