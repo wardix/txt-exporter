@@ -1,0 +1,16 @@
+{
+  "name": "txt-exporter",
+  "module": "src/main.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.8.2"
+  },
+  "dependencies": {
+    "hono": "^4.7.4"
+  }
+}

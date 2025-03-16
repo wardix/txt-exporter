@@ -1,0 +1,2 @@
+unknown_ppp_network{host="gcgs",iface="pppoe-c3068937eaf78",net="10.250.161.23"} 1
+unknown_ppp_network{host="gcgs",iface="pppoe-c3068937f24f4",net="10.250.63.37"} 1
