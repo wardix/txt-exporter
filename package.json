@@ -2,7 +2,9 @@
   "name": "txt-exporter",
   "module": "src/main.ts",
   "scripts": {
-    "build": "tsc"
+    "dev": "bun run --hot src/main.ts",
+    "build": "bun build --minify --outfile dist/main.js --target bun src/main.ts",
+    "tsc": "tsc"
   },
   "devDependencies": {
     "@types/bun": "latest"
